@@ -1,13 +1,20 @@
+import os
+import secrets
 from contextlib import asynccontextmanager
-
 from typing import Annotated, Protocol
+from uuid import uuid4
 
-from fastapi import Depends, FastAPI, Query
+from fastapi import Depends, FastAPI, Query, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from db import init_db
 
 
+# ---------- Запуск ----------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.db = init_db()  # упадёт при старте, если база не открылась
@@ -15,84 +22,201 @@ async def lifespan(app: FastAPI):
     app.state.db.close()
 
 
-app = FastAPI(title="FastAPI Web Server", lifespan=lifespan)
+app = FastAPI(title="ЯЕда API", lifespan=lifespan)
 
 
-@app.get("/healthcheck")
-def health_check():
-    return {
-        "status": "ok",
-        "message": "Сервер работает стабильно",
-    }
-
+# ---------- Модели ----------
 class Recipe(BaseModel):
-    id: int | None = None
+    id: str
     title: str
-    ingredients: list[str]
-    steps: list[str]
-    source: str  # "db" или "mock"
+    ingredients: list[str] = Field(min_length=1)
+    steps: list[str] = Field(min_length=1)
+    description: str
+    taste_tags: list[str]
+    dish_type: str | None
+
+
+class RecipeList(BaseModel):
+    items: list[Recipe]
 
 
 class GenerateRequest(BaseModel):
-    ingredients: list[str] = Field(min_length=1)
+    dish_description: str = Field(min_length=1, max_length=2000, pattern=r"\S")
 
 
 # ---------- Интерфейсы ----------
 class RecipeRepository(Protocol):
-    def search(self, ingredients: list[str], limit: int) -> list[Recipe]: ...
+    def search(
+        self,
+        ingredients: list[str],
+        dish_description: str | None,
+        taste_description: str | None,
+    ) -> list[Recipe]: ...
+
+    def save(self, recipe: Recipe) -> None: ...
 
 
 class RecipeGenerator(Protocol):
-    def generate(self, ingredients: list[str]) -> Recipe: ...
+    async def generate(self, dish_description: str) -> Recipe: ...
 
 
 # ---------- Временные реализации ----------
-class EmptyRecipeRepository:
+class InMemoryRecipeRepository:
+    def __init__(self) -> None:
+        self._items: dict[str, Recipe] = {}
 
-    def search(self, ingredients: list[str], limit: int) -> list[Recipe]:
-        return []
+    def search(self, ingredients, dish_description, taste_description):
+        needles = [i.lower() for i in ingredients]
+        found = [
+            r
+            for r in self._items.values()
+            if needles
+            and all(any(n in line.lower() for line in r.ingredients) for n in needles)
+        ]
+        return sorted(found, key=lambda r: r.id)
+
+    def save(self, recipe):
+        self._items[recipe.id] = recipe
 
 
 class MockRecipeGenerator:
+    """Вместо внешнего AI API: возвращает заготовку."""
 
-    def generate(self, ingredients: list[str]) -> Recipe:
+    async def generate(self, dish_description: str) -> Recipe:
         return Recipe(
-            title=f"Блюдо из: {', '.join(ingredients)}",
-            ingredients=ingredients,
-            steps=[
-                "Подготовьте все продукты.",
-                "Нарежьте и обработайте продукты.",
-                "Приготовьте блюдо до готовности.",
-            ],
-            source="mock",
+            id="",  # настоящий id назначает backend, а не генератор
+            title=f"Блюдо по запросу: {dish_description[:60]}",
+            ingredients=["Продукт — 100 г"],
+            steps=["Подготовьте продукты.", "Приготовьте блюдо до готовности."],
+            description=dish_description,
+            taste_tags=[],
+            dish_type=None,
         )
 
-def get_repository() -> RecipeRepository:
-    return EmptyRecipeRepository()
+
+# ---------- Зависимости ----------
+_recipes = InMemoryRecipeRepository()
+_generator = MockRecipeGenerator()
+
+
+def get_recipes() -> RecipeRepository:
+    return _recipes
 
 
 def get_generator() -> RecipeGenerator:
-    return MockRecipeGenerator()
+    return _generator
 
-@app.get("/recipes/search", response_model=list[Recipe])
+
+# ---------- Ошибки и request_id ----------
+class AppError(Exception):
+    def __init__(self, message: str) -> None:
+        self.message = message
+
+
+def error_response(request: Request, message: str) -> JSONResponse:
+    rid = getattr(request.state, "request_id", "-")
+    return JSONResponse(
+        status_code=400,
+        content={"message": message, "request_id": rid},
+        headers={"X-Request-Id": rid},
+    )
+
+
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    request.state.request_id = f"req-{uuid4().hex[:12]}"
+    response = await call_next(request)
+    response.headers["X-Request-Id"] = request.state.request_id
+    return response
+
+
+@app.exception_handler(AppError)
+async def app_error_handler(request: Request, exc: AppError):
+    return error_response(request, exc.message)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError):
+    return error_response(request, "Некорректные данные запроса.")
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_error_handler(request: Request, exc: StarletteHTTPException):
+    return error_response(request, "Запрос не может быть выполнен.")
+
+
+@app.exception_handler(Exception)
+async def unexpected_error_handler(request: Request, exc: Exception):
+    return error_response(request, "Внутренняя ошибка. Попробуйте позже.")
+
+
+# ---------- Авторизация бота ----------
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+def require_api_key(key: str | None = Depends(api_key_header)) -> None:
+    expected = os.environ.get("BOT_API_KEY")
+    if not expected or not key or not secrets.compare_digest(key, expected):
+        raise AppError("Неверный или отсутствующий ключ доступа.")
+
+
+auth = [Depends(require_api_key)]
+
+
+# ---------- Вспомогательное ----------
+def check_query(request: Request, allowed: set[str]) -> None:
+    """400 на неизвестные и повторяющиеся query-параметры."""
+    keys = [k for k, _ in request.query_params.multi_items()]
+    if len(keys) != len(set(keys)) or not set(keys) <= allowed:
+        raise AppError("Недопустимые или повторяющиеся параметры запроса.")
+
+
+def parse_ingredients(raw: str | None) -> list[str]:
+    if raw is None:
+        return []
+    parts = [p.strip() for p in raw.split(",")]
+    if any(not p for p in parts):
+        raise AppError("Между запятыми в ingredients есть пустой продукт.")
+    if len(parts) > 30 or any(len(p) > 100 for p in parts):
+        raise AppError("Не более 30 продуктов, каждый до 100 символов.")
+    return parts
+
+
+Text = Annotated[str | None, Query(min_length=1, max_length=2000, pattern=r"\S")]
+
+
+# ---------- Эндпоинты ----------
+@app.get("/healthcheck")
+def health_check():
+    return {"status": "ok"}
+
+
+@app.get("/recipes/search", response_model=RecipeList, dependencies=auth)
 def search_recipes(
-    ingredients: Annotated[list[str], Query(min_length=1)],
-    limit: Annotated[int, Query(ge=1, le=50)] = 10,
-    repo: RecipeRepository = Depends(get_repository),
+    request: Request,
+    ingredients: Text = None,
+    dish_description: Text = None,
+    taste_description: Text = None,
+    repo: RecipeRepository = Depends(get_recipes),
 ):
-    return repo.search(ingredients, limit)
+    check_query(request, {"ingredients", "dish_description", "taste_description"})
+    items = parse_ingredients(ingredients)
+    if not items and not (dish_description or taste_description):
+        raise AppError("Укажите ингредиенты или описание блюда.")
+    return RecipeList(items=repo.search(items, dish_description, taste_description))
 
 
-@app.post("/recipes/generate", response_model=Recipe)
-def generate_recipe(
+@app.post("/recipes/generate", response_model=Recipe, dependencies=auth)
+async def generate_recipe(
     body: GenerateRequest,
-    repo: RecipeRepository = Depends(get_repository),
+    repo: RecipeRepository = Depends(get_recipes),
     generator: RecipeGenerator = Depends(get_generator),
 ):
-    found = repo.search(body.ingredients, limit=1)
-    if found:
-        return found[0]
-    return generator.generate(body.ingredients)
+    draft = await generator.generate(body.dish_description.strip())
+    recipe = draft.model_copy(update={"id": f"recipe_{uuid4().hex[:8]}"})
+    repo.save(recipe)  # сохраняем ДО ответа
+    return recipe
+
 
 if __name__ == "__main__":
     import uvicorn
