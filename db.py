@@ -4,6 +4,19 @@ from pathlib import Path
 
 MIGRATIONS: list[tuple[str, ...]] = [
     ("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",),
+    (
+        """
+        CREATE TABLE recipes (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            ingredients TEXT NOT NULL,
+            steps TEXT NOT NULL,
+            description TEXT NOT NULL,
+            taste_tags TEXT NOT NULL,
+            dish_type TEXT
+        )
+        """,
+    ),
 ]
 
 def init_db(path: str | None = None) -> sqlite3.Connection:
