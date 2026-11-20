@@ -1,0 +1,19 @@
+name: Telegram bot
+on:
+  push:
+    paths: ['telegram_bot/**', 'docs/bot-openapi.yaml', '.github/workflows/telegram-bot.yml']
+  pull_request:
+    paths: ['telegram_bot/**', 'docs/bot-openapi.yaml', '.github/workflows/telegram-bot.yml']
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r telegram_bot/requirements.txt openapi-spec-validator
+      - run: python -m unittest discover -s telegram_bot/tests -v
+      - run: openapi-spec-validator docs/bot-openapi.yaml

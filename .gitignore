@@ -8,9 +8,19 @@ wheels/
 
 # Virtual environments
 .venv/
-__pycache__/
+.venv-bot/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Tool caches
 .ruff_cache/
 .pytest_cache/
+
+# Local data
 data/
+telegram_bot/demo.sqlite3
 
 IFood/
