@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from db import init_db
+from search import match_ingredients
 
 
 # ---------- Запуск ----------
@@ -66,14 +67,18 @@ class InMemoryRecipeRepository:
         self._items: dict[str, Recipe] = {}
 
     def search(self, ingredients, dish_description, taste_description):
-        needles = [i.lower() for i in ingredients]
-        found = [
-            r
-            for r in self._items.values()
-            if needles
-            and all(any(n in line.lower() for line in r.ingredients) for n in needles)
-        ]
-        return sorted(found, key=lambda r: r.id)
+        # Нечёткий поиск по ингредиентам (все обязательны).
+        # Описания принимаются и проверяются, но пока не используются.
+        if not ingredients:
+            return []
+        scored = []
+        for recipe in self._items.values():
+            score = match_ingredients(ingredients, recipe.ingredients)
+            if score is not None:
+                scored.append((score, recipe))
+        # по релевантности убыванию, при равенстве по id возрастанию
+        scored.sort(key=lambda pair: (-pair[0], pair[1].id))
+        return [recipe for _, recipe in scored]
 
     def save(self, recipe):
         self._items[recipe.id] = recipe
