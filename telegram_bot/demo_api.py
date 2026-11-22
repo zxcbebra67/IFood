@@ -120,9 +120,7 @@ async def favorites(request):
         (user_id(request),),
     )
     ids = {row[0] for row in rows}
-    return web.json_response(
-        {"items": [recipe for recipe in RECIPES if recipe["id"] in ids]}
-    )
+    return web.json_response({"items": [recipe for recipe in RECIPES if recipe["id"] in ids]})
 
 
 async def change_favorite(request):
@@ -137,9 +135,7 @@ async def change_favorite(request):
     if request.method == "PUT":
         db.execute("INSERT OR IGNORE INTO favorites VALUES (?, ?)", (uid, rid))
     else:
-        db.execute(
-            "DELETE FROM favorites WHERE user_id = ? AND recipe_id = ?", (uid, rid)
-        )
+        db.execute("DELETE FROM favorites WHERE user_id = ? AND recipe_id = ?", (uid, rid))
     db.commit()
     return web.json_response({"saved": request.method == "PUT"})
 
@@ -169,9 +165,7 @@ def create_app(db_path=":memory:"):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Локальный демонстрационный сервер ЯЕда"
-    )
+    parser = argparse.ArgumentParser(description="Локальный демонстрационный сервер ЯЕда")
     parser.add_argument("--port", type=int, default=8081)
     args = parser.parse_args()
     print("ДЕМО: 5 тестовых рецептов. Это не сервер команды.")

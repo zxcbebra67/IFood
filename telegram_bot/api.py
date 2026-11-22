@@ -41,20 +41,14 @@ class RecipesAPI:
 
     async def request(self, method: str, path: str, **kwargs):
         try:
-            async with self.session.request(
-                method, self.base_url + path, **kwargs
-            ) as response:
+            async with self.session.request(method, self.base_url + path, **kwargs) as response:
                 if response.status == 404:
                     raise APIError("Рецепт больше не найден. Попробуй поискать заново.")
                 if response.status >= 400:
-                    raise APIError(
-                        "Сервер пока не может выполнить запрос. Попробуй позже."
-                    )
+                    raise APIError("Сервер пока не может выполнить запрос. Попробуй позже.")
                 return await response.json()
         except (aiohttp.ClientError, TimeoutError, ValueError) as error:
-            raise APIError(
-                "Не удалось связаться с сервером. Попробуй чуть позже."
-            ) from error
+            raise APIError("Не удалось связаться с сервером. Попробуй чуть позже.") from error
 
     async def recipes(self, path: str, **kwargs) -> list[Recipe]:
         data = await self.request("GET", path, **kwargs)

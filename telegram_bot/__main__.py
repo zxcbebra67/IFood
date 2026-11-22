@@ -16,9 +16,7 @@ from .demo_api import create_app
 async def run(demo: bool):
     load_dotenv(Path(__file__).with_name(".env"))
     if not os.getenv("BOT_TOKEN"):
-        raise RuntimeError(
-            "Сначала впиши BOT_TOKEN в telegram_bot/.env (см. .env.example)"
-        )
+        raise RuntimeError("Сначала впиши BOT_TOKEN в telegram_bot/.env (см. .env.example)")
     if not demo:
         await main()
         return
@@ -37,9 +35,7 @@ async def run(demo: bool):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ЯЕда — поиск и избранное")
-    parser.add_argument(
-        "--demo", action="store_true", help="Запустить вместе с тестовым сервером"
-    )
+    parser.add_argument("--demo", action="store_true", help="Запустить вместе с тестовым сервером")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
     try:

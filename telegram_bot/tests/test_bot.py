@@ -205,9 +205,7 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
                     text="Омлет",
                 ),
             )
-            await dp.feed_update(
-                bot, Update(update_id=2, callback_query=callback), api=api
-            )
+            await dp.feed_update(bot, Update(update_id=2, callback_query=callback), api=api)
             api.save.assert_awaited_once_with(42, 1)
         finally:
             await storage.close()

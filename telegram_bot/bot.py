@@ -35,9 +35,7 @@ MENU = ReplyKeyboardMarkup(
     ],
     resize_keyboard=True,
 )
-CANCEL = ReplyKeyboardMarkup(
-    keyboard=[[KeyboardButton(text="Отмена")]], resize_keyboard=True
-)
+CANCEL = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Отмена")]], resize_keyboard=True)
 
 
 class Search(StatesGroup):
@@ -47,17 +45,15 @@ class Search(StatesGroup):
 def recipe_text(recipe: Recipe) -> str:
     ingredients = "\n".join(f"• {escape(item)}" for item in recipe.ingredients)
     steps = "\n".join(f"{i}. {escape(step)}" for i, step in enumerate(recipe.steps, 1))
-    return f"<b>{escape(recipe.title)}</b>\n\nИнгредиенты:\n{ingredients}\n\nПриготовление:\n{steps}"
+    return (
+        f"<b>{escape(recipe.title)}</b>\n\nИнгредиенты:\n{ingredients}\n\nПриготовление:\n{steps}"
+    )
 
 
 def recipe_keyboard(recipe_id: int, saved: bool = False):
-    action, label = (
-        ("remove", "💔 Удалить из избранного") if saved else ("save", "⭐ В избранное")
-    )
+    action, label = ("remove", "💔 Удалить из избранного") if saved else ("save", "⭐ В избранное")
     return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=label, callback_data=f"{action}:{recipe_id}")]
-        ]
+        inline_keyboard=[[InlineKeyboardButton(text=label, callback_data=f"{action}:{recipe_id}")]]
     )
 
 
@@ -75,9 +71,7 @@ async def show_recipes(message: Message, recipes: list[Recipe], saved: bool = Fa
                     plain[start : start + 1800],
                     parse_mode=None,
                     reply_markup=(
-                        recipe_keyboard(recipe.id, saved)
-                        if start + 1800 >= len(plain)
-                        else None
+                        recipe_keyboard(recipe.id, saved) if start + 1800 >= len(plain) else None
                     ),
                 )
 
@@ -154,22 +148,16 @@ async def upcoming(message: Message, state: FSMContext):
 async def search_query(message: Message, state: FSMContext, api: RecipesAPI):
     query = (message.text or "").strip()
     if not query or query.startswith("/") or len(query) > 300:
-        await message.answer(
-            "Нужен текст запроса от 1 до 300 символов. Для выхода нажми «Отмена»."
-        )
+        await message.answer("Нужен текст запроса от 1 до 300 символов. Для выхода нажми «Отмена».")
         return
     await message.answer("Ищу рецепты…")
     try:
         items = await api.search(query)
     except APIError as error:
-        await message.answer(
-            str(error) + "\nМожно повторить запрос или нажать «Отмена»."
-        )
+        await message.answer(str(error) + "\nМожно повторить запрос или нажать «Отмена».")
         return
     if not items:
-        await message.answer(
-            "Ничего не нашлось. Попробуй другое название или меньше ингредиентов."
-        )
+        await message.answer("Ничего не нашлось. Попробуй другое название или меньше ингредиентов.")
         return
     await state.clear()
     await message.answer("Вот что нашлось (до 5 рецептов):", reply_markup=MENU)
@@ -181,9 +169,7 @@ async def search_query(message: Message, state: FSMContext, api: RecipesAPI):
 async def favorite_action(callback: CallbackQuery, api: RecipesAPI):
     action, _, value = (callback.data or "").partition(":")
     if not value.isascii() or not value.isdecimal() or int(value) < 1:
-        await callback.answer(
-            "Некорректная кнопка. Запусти поиск заново.", show_alert=True
-        )
+        await callback.answer("Некорректная кнопка. Запусти поиск заново.", show_alert=True)
         return
     # Stop Telegram's spinner before the potentially slow backend request.
     await callback.answer()
@@ -217,9 +203,7 @@ async def main():
     load_dotenv(Path(__file__).with_name(".env"))
     token = os.getenv("BOT_TOKEN")
     if not token:
-        raise RuntimeError(
-            "Заполни BOT_TOKEN в telegram_bot/.env (пример: .env.example)"
-        )
+        raise RuntimeError("Заполни BOT_TOKEN в telegram_bot/.env (пример: .env.example)")
     headers = {}
     if os.getenv("API_TOKEN"):
         headers["Authorization"] = f"Bearer {os.environ['API_TOKEN']}"
@@ -228,12 +212,8 @@ async def main():
     ) as session:
         dp = Dispatcher()
         dp.include_router(router)
-        dp["api"] = RecipesAPI(
-            session, os.getenv("API_BASE_URL", "http://127.0.0.1:8081")
-        )
-        async with Bot(
-            token, default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-        ) as bot:
+        dp["api"] = RecipesAPI(session, os.getenv("API_BASE_URL", "http://127.0.0.1:8081"))
+        async with Bot(token, default=DefaultBotProperties(parse_mode=ParseMode.HTML)) as bot:
             await dp.start_polling(bot)
 
 

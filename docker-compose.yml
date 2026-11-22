@@ -1,0 +1,23 @@
+name: yaeda
+
+services:
+  backend:
+    build: .
+    image: yaeda-backend:latest
+    restart: unless-stopped
+    environment:
+      BOT_API_KEY: ${BOT_API_KEY:?задайте BOT_API_KEY в .env}
+      DB_PATH: /data/app.db
+    volumes:
+      - backend-data:/data
+    ports:
+      # Порт для клиента (Telegram-бота). Внутри compose-сети бот ходит на http://backend:8080
+      - "${BACKEND_BIND:-0.0.0.0}:${BACKEND_PORT:-8080}:8080"
+    networks:
+      - yaeda
+
+networks:
+  yaeda:
+
+volumes:
+  backend-data:
