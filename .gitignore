@@ -23,4 +23,5 @@ wheels/
 data/
 telegram_bot/demo.sqlite3
 
+IFood/.DS_Store
 IFood/
