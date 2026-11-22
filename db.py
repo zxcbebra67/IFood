@@ -6,7 +6,6 @@ MIGRATIONS: list[tuple[str, ...]] = [
     ("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",),
 ]
 
-
 def init_db(path: str | None = None) -> sqlite3.Connection:
     path = path or os.environ.get("DB_PATH", "./data/app.db")
     if path != ":memory:":
