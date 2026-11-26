@@ -1,10 +1,10 @@
-# Развёртывание backend «ЯЕда»
+# Развёртывание «ЯЕды»
 
-Одна команда на сервере: `bash deploy/deploy.sh`. Backend собирается в Docker, данные (SQLite) лежат в постоянном томе, порт 8080 открыт для Telegram-бота.
+Команда `bash deploy/deploy.sh up` собирает и запускает бэкенд и включённые сервисы. SQLite хранится в постоянном томе. Бот обращается к бэкенду по внутреннему адресу `http://backend:8080`.
 
 ## Что нужно на сервере
 
-Linux, Docker Engine с плагином Compose v2, `git`, `openssl`, `curl` и открытый порт (по умолчанию `8080/tcp`).
+Linux, Docker Engine с плагином Compose v2, `git`, `openssl` и `curl`.
 
 ## Первый запуск
 
@@ -16,8 +16,7 @@ bash deploy/deploy.sh
 Скрипт создаст `.env` из `.env.example`, сгенерирует `BOT_API_KEY` (если он пуст), соберёт образ, запустит контейнер и дождётся статуса healthy. Проверка:
 
 ```bash
-bash deploy/deploy.sh check          # или: curl http://<сервер>:8080/healthcheck
-grep BOT_API_KEY .env                # ключ для бота; в открытый чат и git не отправлять
+bash deploy/deploy.sh check
 ```
 
 ## Обновление
@@ -45,37 +44,79 @@ bash deploy/deploy.sh remote         # со своей машины по SSH (н
 |---|---|---|
 | `BOT_API_KEY` | генерируется | ключ бот → backend (заголовок `X-API-Key`) |
 | `BACKEND_PORT` | `8080` | порт на хосте |
-| `BACKEND_BIND` | `0.0.0.0` | `127.0.0.1`, если порт не нужен снаружи |
+| `BACKEND_BIND` | `127.0.0.1` | Адрес публикации порта на хосте |
+| `BOT_TOKEN` | Пусто | Токен Telegram-бота, обязателен с профилем `bot` |
+| `COMPOSE_PROFILES` | Пусто | Значение `bot` включает контейнер Telegram-бота |
+| `TELEGRAM_PROXY_URL` | Пусто | Прокси для запросов к Telegram Bot API |
+| `OPENROUTER_API_KEY` | Пусто | Ключ OpenRouter для генерации рецептов |
+| `OPENROUTER_MODEL` | `openai/gpt-4o-mini` | Модель генерации |
+| `OPENROUTER_PROXY_URL` | Пусто | HTTP-прокси для HTTPS-запросов бэкенда к OpenRouter |
 
-База лежит в томе `backend-data` (`/data/app.db`) и переживает перезапуск и пересборку. Команда `docker compose down -v` удалит том вместе с данными.
+Прокси Telegram и прокси OpenRouter задаются отдельно. Если для обоих используется
+один Webshare, можно указать в `.env` адрес один раз и добавить ниже:
+
+```dotenv
+OPENROUTER_PROXY_URL=${TELEGRAM_PROXY_URL}
+```
+
+После изменения `.env` выполните `bash deploy/deploy.sh up`, чтобы Compose
+применил настройки к контейнерам.
+
+## Хранение SQLite
+
+В контейнере база находится в `/data/app.db`. При новой установке используется
+том `backend-data`. На боевой ВМ каталог `/data` подключён с отдельного HDD.
+При обновлении на этой ВМ сохраните существующий локальный файл
+`deploy/compose.d/production.yml` и проверьте, что диск смонтирован.
+
+Минимальная настройка для ВМ с этим HDD:
+
+```yaml
+services:
+  backend:
+    volumes:
+      - type: bind
+        source: /mnt/students-data/yaeda
+        target: /data
+        bind:
+          create_host_path: false
+```
+
+SQLite может хранить рядом файлы `app.db-wal` и `app.db-shm`. Для резервного
+копирования работающей базы используйте SQLite Backup API или команду
+`.backup` SQLite. Команда `docker compose down -v` удаляет том новой установки.
 
 ## Как подключается бот
 
 - **В той же compose-сети**: адрес `http://backend:8080`, заголовок `X-API-Key: <BOT_API_KEY>`.
-- **С другой машины**: `http://<сервер>:<BACKEND_PORT>`, на сервере порт должен быть открыт (`ufw allow 8080/tcp`).
-- **HTTPS**: контракт требует его для рабочих вызовов, а сам backend отвечает по HTTP. Для боевого режима поставьте перед ним reverse proxy (Caddy или nginx) с сертификатом.
+- **С другой машины**: настройте HTTPS через reverse proxy с сертификатом.
 
-## Как встроить свой сервис (например, бота)
+## Запуск бэкенда и Telegram-бота вместе
 
-Скрипт сам подхватывает все файлы `deploy/compose.d/*.yml`: свой сервис достаточно описать в отдельном файле, `deploy.sh` не меняется.
+Сервис бота уже описан в `deploy/compose.d/bot.yml`. Скрипт запуска
+подключает этот файл автоматически.
 
-```yaml
-# deploy/compose.d/bot.yml
-services:
-  bot:
-    build: ./telegram_bot
-    restart: unless-stopped
-    environment:
-      BACKEND_URL: http://backend:8080
-      BACKEND_API_KEY: ${BOT_API_KEY}
-    depends_on:
-      backend:
-        condition: service_healthy
-    networks:
-      - yaeda
-```
+1. В корне проекта создай `.env` из `.env.example`, если файла ещё нет.
+2. В корневом `.env` задай `BOT_TOKEN`, `OPENROUTER_API_KEY` и `COMPOSE_PROFILES=bot`.
+   При обновлении используй существующий `.env` и сохрани текущий `BOT_API_KEY`.
+   Если Telegram недоступен напрямую с ВМ, задай `TELEGRAM_PROXY_URL` в формате
+   `http://user:password@host:port` для HTTP-прокси Webshare. Спецсимволы в логине
+   и пароле кодируются как части URL. Для прямого доступа оставь переменную пустой.
+   Для публикации порта только внутри ВМ укажи `BACKEND_BIND=127.0.0.1`.
+3. Останови локальную копию Telegram-бота с тем же токеном и запусти:
 
-Свои переменные добавляйте в `.env.example` отдельным блоком с комментарием.
+   ```bash
+   bash deploy/deploy.sh up
+   bash deploy/deploy.sh check
+   bash deploy/deploy.sh logs bot
+   ```
+
+Бот дождётся готовности бэкенда и будет обращаться к нему по адресу
+`http://backend:8080` внутри Docker-сети. Для проверки пришли боту `/start`
+в Telegram, затем найди омлет, добавь его в избранное, проверь список и удаление.
+После этого попроси бота сгенерировать рецепт и сохрани результат в избранном.
+
+Чтобы запускать только бэкенд на чистой установке, оставь профиль бота выключенным.
 
 ## Доступ к серверу по SSH
 
@@ -93,7 +134,7 @@ echo "ssh-ed25519 AAAA... имя@yaeda" >> ~/.ssh/authorized_keys
 chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys
 ```
 
-Удалённый деплой настраивается файлом `deploy/.deploy.env` (добавьте его в `.gitignore`):
+Удалённый деплой настраивается файлом `deploy/.deploy.env`, который уже исключён из Git:
 
 ```bash
 DEPLOY_HOST=user@server

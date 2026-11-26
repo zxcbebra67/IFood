@@ -10,7 +10,7 @@ from fastapi import Depends, FastAPI, Path, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader
-from openai import APIError, AsyncOpenAI
+from openai import APIError, APIStatusError, APITimeoutError, AsyncOpenAI
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -318,6 +318,8 @@ class OpenRouterRecipeGenerator:
         self.client = AsyncOpenAI(
             base_url="https://openrouter.ai/api/v1",
             api_key=self.api_key or "missing-key",
+            timeout=45.0,
+            max_retries=0,
             default_headers={
                 "HTTP-Referer": "http://localhost:8080",
                 "X-Title": "YaEda API",
@@ -331,6 +333,7 @@ class OpenRouterRecipeGenerator:
         try:
             response = await self.client.responses.parse(
                 model=self.model,
+                store=False,
                 input=[
                     {
                         "role": "system",
@@ -367,8 +370,12 @@ class OpenRouterRecipeGenerator:
                 dish_type=parsed.dish_type,
             )
 
-        except APIError as e:
-            raise AppError(f"Ошибка API генерации (код {e.status_code}): {e.message}")
+        except APITimeoutError as error:
+            raise AppError("Генерация заняла слишком много времени. Попробуйте ещё раз.") from error
+        except APIStatusError as error:
+            raise AppError(f"Ошибка сервиса генерации (код {error.status_code}).") from error
+        except APIError as error:
+            raise AppError("Не удалось связаться с сервисом генерации.") from error
         except AppError:
             raise
         except Exception:

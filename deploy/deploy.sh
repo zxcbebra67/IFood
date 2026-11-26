@@ -96,7 +96,7 @@ cmd_up() {
   dc up -d --build
   wait_healthy
   dc ps
-  log "проверка: curl http://<адрес-сервера>:$(host_port)/healthcheck"
+  log "проверка: bash deploy/deploy.sh check"
 }
 
 cmd_check() {

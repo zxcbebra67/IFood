@@ -1,0 +1,15 @@
+services:
+  bot:
+    profiles: [bot]
+    build: ./telegram_bot
+    restart: unless-stopped
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN:-}
+      TELEGRAM_PROXY_URL: ${TELEGRAM_PROXY_URL:-}
+      BOT_API_KEY: ${BOT_API_KEY:?задайте BOT_API_KEY в .env}
+      API_BASE_URL: http://backend:8080
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - yaeda

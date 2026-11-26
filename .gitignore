@@ -10,6 +10,7 @@ wheels/
 .venv/
 .venv-bot/
 deploy/.deploy.env
+deploy/compose.d/production.yml
 
 # Secrets
 .env

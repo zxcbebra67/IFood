@@ -8,11 +8,15 @@ services:
     environment:
       BOT_API_KEY: ${BOT_API_KEY:?задайте BOT_API_KEY в .env}
       DB_PATH: /data/app.db
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-4o-mini}
+      HTTPS_PROXY: ${OPENROUTER_PROXY_URL:-}
+      NO_PROXY: 127.0.0.1,localhost,backend
     volumes:
       - backend-data:/data
     ports:
-      # Порт для клиента (Telegram-бота). Внутри compose-сети бот ходит на http://backend:8080
-      - "${BACKEND_BIND:-0.0.0.0}:${BACKEND_PORT:-8080}:8080"
+      # Порт для проверок с хоста. В compose-сети бот ходит на http://backend:8080.
+      - "${BACKEND_BIND:-127.0.0.1}:${BACKEND_PORT:-8080}:8080"
     networks:
       - yaeda
 

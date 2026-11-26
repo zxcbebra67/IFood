@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """Only this module knows how to talk to the team's backend."""
 from dataclasses import dataclass
+from urllib.parse import quote
 
 import aiohttp
 
@@ -12,16 +13,19 @@ class APIError(Exception):
 
 @dataclass(frozen=True)
 class Recipe:
-    id: int
+    id: int | str
     title: str
     ingredients: list[str]
     steps: list[str]
 
     @classmethod
     def parse(cls, data: dict) -> Recipe:
+        recipe_id = data.get("id")
+        valid_id = (type(recipe_id) is int and recipe_id > 0) or (
+            isinstance(recipe_id, str) and bool(recipe_id.strip())
+        )
         if (
-            type(data.get("id")) is not int
-            or data["id"] < 1
+            not valid_id
             or not isinstance(data.get("title"), str)
             or not data["title"].strip()
             or any(
@@ -41,14 +45,24 @@ class RecipesAPI:
 
     async def request(self, method: str, path: str, **kwargs):
         try:
-            async with self.session.request(method, self.base_url + path, **kwargs) as response:
+            async with self.session.request(
+                method, self.base_url + path, **kwargs
+            ) as response:
+                if response.status == 400:
+                    error = await response.json()
+                    if isinstance(error, dict) and isinstance(error.get("message"), str):
+                        raise APIError(error["message"])
                 if response.status == 404:
                     raise APIError("Рецепт больше не найден. Попробуй поискать заново.")
                 if response.status >= 400:
-                    raise APIError("Сервер пока не может выполнить запрос. Попробуй позже.")
+                    raise APIError(
+                        "Сервер пока не может выполнить запрос. Попробуй позже."
+                    )
                 return await response.json()
         except (aiohttp.ClientError, TimeoutError, ValueError) as error:
-            raise APIError("Не удалось связаться с сервером. Попробуй чуть позже.") from error
+            raise APIError(
+                "Не удалось связаться с сервером. Попробуй чуть позже."
+            ) from error
 
     async def recipes(self, path: str, **kwargs) -> list[Recipe]:
         data = await self.request("GET", path, **kwargs)
@@ -57,14 +71,31 @@ class RecipesAPI:
         except (KeyError, TypeError, ValueError, AttributeError) as error:
             raise APIError("Сервер вернул непонятный ответ. Попробуй позже.") from error
 
+    async def generate(self, description: str) -> Recipe:
+        data = await self.request(
+            "POST",
+            "/recipes/generate",
+            json={"dish_description": description},
+            timeout=aiohttp.ClientTimeout(total=60),
+        )
+        try:
+            return Recipe.parse(data)
+        except (KeyError, TypeError, ValueError, AttributeError) as error:
+            raise APIError("Сервер вернул непонятный рецепт. Попробуй позже.") from error
+
     async def search(self, query: str) -> list[Recipe]:
-        return await self.recipes("/recipes", params={"query": query, "limit": 5})
+        parameter = "ingredients" if "," in query else "dish_description"
+        return await self.recipes("/recipes/search", params={parameter: query})
 
     async def favorites(self, user_id: int) -> list[Recipe]:
-        return await self.recipes(f"/users/{user_id}/favorites")
+        return await self.recipes("/fav", params={"user_id": user_id})
 
-    async def save(self, user_id: int, recipe_id: int):
-        await self.request("PUT", f"/users/{user_id}/favorites/{recipe_id}")
+    async def save(self, user_id: int, recipe_id: int | str):
+        await self.request(
+            "PUT", f"/fav/{quote(str(recipe_id), safe='')}", params={"user_id": user_id}
+        )
 
-    async def remove(self, user_id: int, recipe_id: int):
-        await self.request("DELETE", f"/users/{user_id}/favorites/{recipe_id}")
+    async def remove(self, user_id: int, recipe_id: int | str):
+        await self.request(
+            "DELETE", f"/fav/{quote(str(recipe_id), safe='')}", params={"user_id": user_id}
+        )

@@ -1,8 +1,10 @@
 """Local demonstration server, not the production backend. Binds to loopback only."""
 
 import argparse
+import json
 import sqlite3
 from pathlib import Path
+from uuid import uuid4
 
 from aiohttp import web
 
@@ -84,12 +86,8 @@ def normalize(value):
 
 
 async def search(request):
-    query = request.query.get("query", "").strip()
-    try:
-        limit = int(request.query.get("limit", "5"))
-    except ValueError:
-        raise web.HTTPBadRequest(text="Invalid limit")
-    if not 1 <= len(query) <= 300 or not 1 <= limit <= 20:
+    query = (request.query.get("ingredients") or request.query.get("dish_description", "")).strip()
+    if not 1 <= len(query) <= 2000:
         raise web.HTTPBadRequest(text="Invalid search")
     terms = [normalize(term) for term in query.split(",") if term.strip()]
     items = [
@@ -101,12 +99,39 @@ async def search(request):
             for term in terms
         )
     ]
-    return web.json_response({"items": items[:limit]})
+    return web.json_response({"items": items})
+
+
+async def generate(request):
+    try:
+        body = await request.json()
+    except ValueError:
+        body = None
+    description = body.get("dish_description") if isinstance(body, dict) else None
+    if not isinstance(description, str) or not 1 <= len(description.strip()) <= 2000:
+        return web.json_response(
+            {"message": "Опиши блюдо текстом от 1 до 2000 символов.", "request_id": uuid4().hex},
+            status=400,
+        )
+    description = description.strip()
+    recipe = {
+        "id": f"recipe_{uuid4().hex}",
+        "title": f"Демо-рецепт: {description[:60]}",
+        "ingredients": ["Тестовый ингредиент — 100 г"],
+        "steps": ["Подготовь ингредиенты из списка."],
+        "description": description,
+        "taste_tags": [],
+        "dish_type": None,
+    }
+    db = request.app[DB_KEY]
+    with db:
+        db.execute("INSERT INTO generated_recipes VALUES (?, ?)", (recipe["id"], json.dumps(recipe)))
+    return web.json_response(recipe)
 
 
 def user_id(request):
     try:
-        value = int(request.match_info["user_id"])
+        value = int(request.query.get("user_id", ""))
         if value <= 0:
             raise ValueError
         return value
@@ -120,24 +145,33 @@ async def favorites(request):
         (user_id(request),),
     )
     ids = {row[0] for row in rows}
-    return web.json_response({"items": [recipe for recipe in RECIPES if recipe["id"] in ids]})
+    items = [recipe for recipe in RECIPES if recipe["id"] in ids]
+    generated = request.app[DB_KEY].execute(
+        "SELECT recipe FROM generated_recipes JOIN favorites "
+        "ON generated_recipes.id = favorites.recipe_id WHERE user_id = ? ORDER BY id",
+        (user_id(request),),
+    )
+    items.extend(json.loads(row[0]) for row in generated)
+    return web.json_response({"items": items})
 
 
 async def change_favorite(request):
     uid = user_id(request)
-    try:
-        rid = int(request.match_info["recipe_id"])
-    except ValueError:
-        raise web.HTTPBadRequest(text="Invalid recipe ID")
-    if rid not in {recipe["id"] for recipe in RECIPES}:
-        raise web.HTTPNotFound()
+    value = request.match_info["recipe_id"]
     db = request.app[DB_KEY]
+    rid = int(value) if value.isascii() and value.isdecimal() else value
+    if rid not in {recipe["id"] for recipe in RECIPES} and not db.execute(
+        "SELECT 1 FROM generated_recipes WHERE id = ?", (rid,)
+    ).fetchone():
+        raise web.HTTPNotFound()
     if request.method == "PUT":
         db.execute("INSERT OR IGNORE INTO favorites VALUES (?, ?)", (uid, rid))
     else:
-        db.execute("DELETE FROM favorites WHERE user_id = ? AND recipe_id = ?", (uid, rid))
+        db.execute(
+            "DELETE FROM favorites WHERE user_id = ? AND recipe_id = ?", (uid, rid)
+        )
     db.commit()
-    return web.json_response({"saved": request.method == "PUT"})
+    return web.json_response({"is_favorite": request.method == "PUT"})
 
 
 def create_app(db_path=":memory:"):
@@ -149,6 +183,7 @@ def create_app(db_path=":memory:"):
             "CREATE TABLE IF NOT EXISTS favorites "
             "(user_id INTEGER, recipe_id INTEGER, PRIMARY KEY (user_id, recipe_id))"
         )
+        db.execute("CREATE TABLE IF NOT EXISTS generated_recipes (id TEXT PRIMARY KEY, recipe TEXT NOT NULL)")
         db.commit()
         app[DB_KEY] = db
         try:
@@ -157,15 +192,18 @@ def create_app(db_path=":memory:"):
             db.close()
 
     app.cleanup_ctx.append(database_lifetime)
-    app.router.add_get("/recipes", search)
-    app.router.add_get("/users/{user_id}/favorites", favorites)
-    app.router.add_put("/users/{user_id}/favorites/{recipe_id}", change_favorite)
-    app.router.add_delete("/users/{user_id}/favorites/{recipe_id}", change_favorite)
+    app.router.add_get("/recipes/search", search)
+    app.router.add_post("/recipes/generate", generate)
+    app.router.add_get("/fav", favorites)
+    app.router.add_put("/fav/{recipe_id}", change_favorite)
+    app.router.add_delete("/fav/{recipe_id}", change_favorite)
     return app
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Локальный демонстрационный сервер ЯЕда")
+    parser = argparse.ArgumentParser(
+        description="Локальный демонстрационный сервер ЯЕда"
+    )
     parser.add_argument("--port", type=int, default=8081)
     args = parser.parse_args()
     print("ДЕМО: 5 тестовых рецептов. Это не сервер команды.")

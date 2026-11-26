@@ -66,7 +66,7 @@ class APIIntegrationTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(APIError):
             await self.api.search(" ")
         with self.assertRaises(APIError):
-            await self.api.search("x" * 301)
+            await self.api.search("x" * 2001)
 
     async def test_unavailable_server(self):
         await self.server.close()
@@ -85,7 +85,7 @@ class APIIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 return web.json_response(payload, status=status)
 
             app = web.Application()
-            app.router.add_get("/recipes", invalid_response)
+            app.router.add_get("/recipes/search", invalid_response)
             server = TestServer(app)
             await server.start_server()
             try:
@@ -123,7 +123,7 @@ class HandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Ошибка сервера", self.message.answer.call_args.args[0])
 
     async def test_non_text_and_oversized_input_do_not_call_api(self):
-        for text in (None, " ", "x" * 301, "/unknown"):
+        for text in (None, " ", "x" * 2001, "/unknown"):
             self.message.text = text
             await search_query(self.message, self.state, self.api)
         self.api.search.assert_not_awaited()
@@ -205,7 +205,9 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
                     text="Омлет",
                 ),
             )
-            await dp.feed_update(bot, Update(update_id=2, callback_query=callback), api=api)
+            await dp.feed_update(
+                bot, Update(update_id=2, callback_query=callback), api=api
+            )
             api.save.assert_awaited_once_with(42, 1)
         finally:
             await storage.close()
