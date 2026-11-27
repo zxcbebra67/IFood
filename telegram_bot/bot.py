@@ -31,7 +31,7 @@ MENU = ReplyKeyboardMarkup(
             KeyboardButton(text="⭐ Избранное"),
             KeyboardButton(text="✍️ Сгенерировать рецепт"),
         ],
-        [KeyboardButton(text="ℹ️ Информация"), KeyboardButton(text="История")],
+        [KeyboardButton(text="ℹ️ Информация")],
     ],
     resize_keyboard=True,
 )
